@@ -4,8 +4,10 @@ import sys
 import time
 import csv
 import pandas as pd
+import numpy as np
 from importlib import reload
 from google.cloud import storage
+from collections import OrderedDict
 
 def doubleDigit(num):
     if num < 10 :
@@ -77,7 +79,29 @@ def main(v_id,c_id):
         wr.writerow(tmp)
     f.close()
 
-def analysis(file_name):    
+def convert_to_sec(time) : 
+    splited_time = time.split(':')
+    hours = int(splited_time[0])
+    minutes = int(splited_time[1])
+    seconds = int(splited_time[2])
+    return (hours * 3600) + (minutes * 60) + seconds 
+
+def convert_to_interval(idx) :
+    end = idx * 120
+    start = end - 120
+    return str(start) + " - " + str(end)
+def convert_to_start(time) :
+    strip_str = time.strip()
+    start = strip_str.split('-')[0]
+    return int(start)
+def convert_to_end(time) :
+    strip_str = time.strip()
+    end = strip_str.split('-')[1]
+    return int(end)
+  
+def analysis(bucket_name,file_name):     
+    chat_response = OrderedDict()
+    #Chat Frequency Graph
     print("Start Analysis")
     df = pd.read_csv("chat.csv", names=['time', 'name', 'chat'])
     timeCountDf = df.groupby('time').count()['chat']  # 정렬 안되어 있는것
@@ -85,14 +109,47 @@ def analysis(file_name):
     ax = timeCountDf.plot(title='chat numbers', figsize=(15, 5))
     fig = ax.get_figure()
     fig.savefig(str(file_name)+'.png')
+    chat_frequency_url = upload_to_GCS(bucket_name, file_name)
+    chat_response["chat_frequency_url"] = chat_frequency_url
+
+    # Chat Edit Point
+    time_df = pd.read_csv("chat.csv", names=['time', 'name', 'chat'])
+    time_df['time'] = time_df['time'].apply(lambda x : convert_to_sec(x))
+    
+    max_time = time_df['time'].max()
+    bins = np.arange(0,max_time,120)
+    ind = np.digitize(time_df["time"], bins)
+    time_df["idx"] = ind
+    
+    #Intermediate Result
+    new_df = time_df["idx"].value_counts().rename_axis('time_index').reset_index(name='count_chat')
+    new_df["time_index"] = new_df["time_index"].apply(lambda x : convert_to_interval(x))
+    mask = new_df['time_index'].isin(['0 - 120', '120 - 240', '240 - 360'])
+    new_df = new_df[~mask]
+    count_mean = int(new_df["count_chat"].mean())
+    new_df = new_df[new_df.count_chat > count_mean]
+
+    ### For Response
+    response_df = new_df.copy()
+    response_df["start"] = response_df["time_index"].apply(lambda x : convert_to_start(x))
+    response_df["end"] = response_df["time_index"].apply(lambda x : convert_to_end(x))
+
+    response_df = response_df.drop(columns=['count_chat', 'time_index']).sort_values(by=["start"])
+    chat_response["chat_edit_list"] = response_df.to_json(orient='records')
+    print(chat_response)
+    return chat_response
+    
+'''
     output = sortedTimeCountDf[sortedTimeCountDf == sortedTimeCountDf.max()]
     timeList = output.index.values
     timeList.sort()
     with open(str(file_name)+'_time.txt','w') as file:
         for time in timeList:
             file.write(time+'\n')
-    print("Start Analysis")
-     
+    print("Stop Analysis")
+
+'''
+    
 def download_file(bucket_name, file_name, destination_file_name):
     print("Start Download File")
     storage_client = storage.Client()
@@ -107,6 +164,5 @@ def upload_to_GCS(bucket_name, file_name):
     bucket = storage_client.bucket(bucket_name)
     png_blob_name = bucket.blob(file_name+ "/result/chat-frequency.png")
     png_blob_name.upload_from_filename( str(file_name) + ".png" )
+    return file_name+ "/result/chat-frequency.png"
 
-    chat_edit_point_blob_name = bucket.blob(file_name + "/result/chat-edit-point.txt")
-    chat_edit_point_blob_name.upload_from_filename(str(file_name) + "_time.txt")
