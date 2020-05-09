@@ -135,8 +135,16 @@ def analysis(bucket_name,file_name):
     response_df["end"] = response_df["time_index"].apply(lambda x : convert_to_end(x))
 
     response_df = response_df.drop(columns=['count_chat', 'time_index']).sort_values(by=["start"])
-    chat_response["chat_edit_list"] = response_df.to_json(orient='records')
-    print(chat_response)
+    values = response_df.values.tolist()
+    response_json = []
+    for start, end in values :
+        chat_interval = OrderedDict()
+        chat_interval['start'] = start
+        chat_interval['end'] = end
+        response_json.append(chat_interval)
+    chat_response["chat_edit_list"] = response_json 
+
+    # convert_to_json(response_df)
     return chat_response
     
 '''
@@ -149,7 +157,8 @@ def analysis(bucket_name,file_name):
     print("Stop Analysis")
 
 '''
-    
+
+
 def download_file(bucket_name, file_name, destination_file_name):
     print("Start Download File")
     storage_client = storage.Client()

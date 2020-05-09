@@ -14,7 +14,7 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.c
 COPY ./capstone-sptt.json /root/credential_key.json
 RUN gcloud auth activate-service-account --key-file=credential_key.json && gcloud config set project $PROJ_NAME
 
-RUN pip3 install --upgrade pip && pip3 install --upgrade google-cloud-storage && pip3 install --upgrade google-cloud-speech && pip3 install flask 
+RUN pip3 install --upgrade pip && pip3 install --upgrade google-cloud-storage && pip3 install --upgrade google-cloud-speech && pip3 install flask flask_cors
 RUN pip3 install pandas matplotlib
 
 RUN gcloud auth activate-service-account --key-file credential_key.json
