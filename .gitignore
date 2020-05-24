@@ -1,1 +1,5 @@
 capstone-sptt.json
+__pycache__/
+*.csv 
+*.png
+.ipynb_checkpoints/

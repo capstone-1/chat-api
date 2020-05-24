@@ -1,3 +1,12 @@
+'''
+선정 방법 
+1. Median Filter를 사용해  noise 제거 - OK
+2. Local Minimum 구하기 (30분 간격을 나누기)
+3. 임계값 이상의 값 구하기 (Local Minimum 중 가장 작은 값으로 선정)
+4. 간격? 기존 : 앞뒤로 1분
+5. 1분 간격에 위의 구간에 만족하는 피크가 있는 경우 구간 연결
+'''
+import math
 import requests
 import json
 import sys
@@ -8,76 +17,6 @@ import numpy as np
 from importlib import reload
 from google.cloud import storage
 from collections import OrderedDict
-
-def doubleDigit(num):
-    if num < 10 :
-        return '0'+str(num)
-    else:
-        return str(num)
-
-
-def main(v_id,c_id):
-    if sys.version_info[0] == 2:
-        reload(sys)
-        sys.setdefaultencoding('utf-8')
-    
-    
-    videoId = v_id
-    clientId = c_id
-    
-
-    chat = []
-    time = []
-    user = []
-    
-    nextCursor = ''
-    
-    params = {}
-    params['client_id'] = clientId
-    
-    
-    i = 0
-    while True :
-        if i == 0 :
-            URL = 'https://api.twitch.tv/v5/videos/'+videoId+'/comments?content_offset_seconds=0' 
-            i += 1
-        else:
-            URL = 'https://api.twitch.tv/v5/videos/'+videoId+'/comments?cursor=' 
-            URL +=  nextCursor   
-            
-
-        response = requests.get(URL, params=params)
-        
-        j = json.loads(response.text)
-        # with open('api.json','a',encoding='utf-8') as file:
-        #     json.dump(j,file,indent='\t',ensure_ascii=False)
-        for k in range(0,len(j["comments"])):
-            timer = j["comments"][k]["content_offset_seconds"]
-            
-            timeMinute = int(timer/60)
-
-            if timeMinute >= 60 :
-                timeHour = int(timeMinute/60)
-                timeMinute %= 60
-            else :
-                timeHour = int(timeMinute/60)
-    
-            timeSec = int(timer%60)
-            
-            time.append(doubleDigit(timeHour)+':'+doubleDigit(timeMinute)+':'+doubleDigit(timeSec))
-            user.append(j["comments"][k]["commenter"]["display_name"])
-            chat.append(j["comments"][k]["message"]["body"])
-        if '_next' not in j:
-            break
-        
-        nextCursor = j["_next"]
-
-    f = open(videoId+".csv", mode='w',encoding='utf-8-sig',newline='')
-    wr = csv.writer(f)
-    for x in range(0, len(time)):
-        tmp = [str(time[x]), str(user[x]), str(chat[x])]
-        wr.writerow(tmp)
-    f.close()
 
 def convert_to_sec(time) : 
     splited_time = time.split(':')
@@ -90,73 +29,142 @@ def convert_to_interval(idx) :
     end = idx * 120
     start = end - 120
     return str(start) + " - " + str(end)
+
 def convert_to_start(time) :
     strip_str = time.strip()
     start = strip_str.split('-')[0]
     return int(start)
+
 def convert_to_end(time) :
     strip_str = time.strip()
     end = strip_str.split('-')[1]
     return int(end)
   
-def analysis(bucket_name,file_name):     
-    chat_response = OrderedDict()
-    #Chat Frequency Graph
-    print("Start Analysis")
-    df = pd.read_csv("chat.csv", names=['time', 'name', 'chat'])
-    timeCountDf = df.groupby('time').count()['chat']  # 정렬 안되어 있는것
-    sortedTimeCountDf = df['time'].value_counts()  # 시간별 채팅횟수 내림차순
-    ax = timeCountDf.plot(title='chat numbers', figsize=(15, 5))
+def median_filter(data,filter_size) :
+    for x in range(len(data)) : 
+        median_list = []
+        for index in range(x-filter_size, x+filter_size+1) : 
+            if (index >= 0 and index < len(data)) :     
+                median_list.append(data[index])
+        data[x] =  get_median_value(median_list)
+    return data
+
+def get_median_value(median_list) : 
+    median_idx = len(median_list)//2
+    median_list.sort()
+    return median_list[median_idx]
+
+def get_frequency_graph_url(timeCountSeries, file_name, bucket_name) :
+    ax = timeCountSeries.plot(title='chat numbers', figsize=(20, 5))
     fig = ax.get_figure()
     fig.savefig(str(file_name)+'.png')
-    chat_frequency_url = upload_to_GCS(bucket_name, file_name)
-    chat_response["chat_frequency_url"] = chat_frequency_url
-
-    # Chat Edit Point
-    time_df = pd.read_csv("chat.csv", names=['time', 'name', 'chat'])
-    time_df['time'] = time_df['time'].apply(lambda x : convert_to_sec(x))
+    return upload_to_GCS(bucket_name, file_name)
     
-    max_time = time_df['time'].max()
-    bins = np.arange(0,max_time,120)
-    ind = np.digitize(time_df["time"], bins)
-    time_df["idx"] = ind
-    
-    #Intermediate Result
-    new_df = time_df["idx"].value_counts().rename_axis('time_index').reset_index(name='count_chat')
-    new_df["time_index"] = new_df["time_index"].apply(lambda x : convert_to_interval(x))
-    mask = new_df['time_index'].isin(['0 - 120', '120 - 240', '240 - 360'])
-    new_df = new_df[~mask]
-    count_mean = int(new_df["count_chat"].mean())
-    new_df = new_df[new_df.count_chat > count_mean]
+def get_local_maximum_df(time_count_df):
+    max_time = time_count_df['time'].max()
+    bins = np.arange(0,max_time,3600)
+    ind = np.digitize(time_count_df["time"], bins)
+    time_count_df["location"] = ind
+    location_groups = time_count_df.groupby('location')
+    local_maximum_df = pd.DataFrame(columns = ['time','chat_count', 'location'])
+    for location, location_group in location_groups:
+        local_maximum = location_group.sort_values(by='chat_count').tail(1)
+        local_maximum_df = local_maximum_df.append(local_maximum)
+    return local_maximum_df
 
-    ### For Response
-    response_df = new_df.copy()
-    response_df["start"] = response_df["time_index"].apply(lambda x : convert_to_start(x))
-    response_df["end"] = response_df["time_index"].apply(lambda x : convert_to_end(x))
+def get_increase_df(time_count_df) :
+    increase_threshold = math.ceil(time_count_df['chat_count'].mean())
+    cond = ( time_count_df["chat_count"] - time_count_df["chat_count"].shift(-1) ) > increase_threshold
+    increase_df = time_count_df[cond]
+    return increase_df
 
-    response_df = response_df.drop(columns=['count_chat', 'time_index']).sort_values(by=["start"])
-    values = response_df.values.tolist()
-    response_json = []
-    for start, end in values :
+def get_interval_list(peak_df, local_maximum_df, time_count_df):
+    peak_time_list = peak_df['time'].to_list()
+    result_json = []
+    for time in peak_time_list :
+        start = time-60
+        end = time+60
+        local_maximum = local_maximum_df.query('time<=@time')['chat_count'].tail(1).to_list()[0]
+
+        start_result = time_count_df.query('time<=@start & time > @start-60')
+        start_result = start_result.query('chat_count>=@local_maximum')
+        
+        end_result = time_count_df.query('time>@end & time< @end+60')
+        end_result = end_result.query('chat_count>=@local_maximum')
+
+        if (len(start_result['time'].to_list()) == 0) :
+            print("Origin Start : ", start)
+        else :
+            start = start_result['time'].to_list()[0]
+            peak_time_list.append(start-60)
+            print("Changed Start : ", start)
+            
+        if (len(end_result['time'].to_list()) == 0) :
+            print("Origin End : ", end)
+        else :
+            end = end_result['time'].to_list()[0]
+            peak_time_list.append(end+60)
+            print("Changed End : ", end)
         chat_interval = OrderedDict()
         chat_interval['start'] = start
         chat_interval['end'] = end
-        response_json.append(chat_interval)
+        result_json.append(chat_interval)
+    return result_json
+
+def remove_duplicate_interval(result_json):
+    response_json = []
+    for idx, val in enumerate(result_json) :
+        if (idx == len(result_json)-1) : continue
+        start = val['start']
+        end = val['end']
+        next_start = result_json[idx+1]['start']
+        next_end = result_json[idx+1]['end']
+        chat_interval = OrderedDict()
+
+        if (next_start <= end) : 
+            end = next_end
+            chat_interval['start'] = start
+            chat_interval['end'] = end
+            result_json[idx+1] = chat_interval
+        else:
+            chat_interval['start'] = start
+            chat_interval['end'] = end
+            response_json.append(chat_interval)
+            
+    return response_json
+
+def analysis(bucket_name,file_name):     
+    chat_response = OrderedDict()
+    ############### Chat Frequency Graph
+    print("Start Analysis")
+    df = pd.read_csv("chat.csv", names=['time', 'name', 'chat'])
+    timeCountSeries = df.groupby('time').count()['chat'] 
+    timeCountSeries = median_filter(timeCountSeries, 3)
+    chat_response["chat_frequency_url"] = get_frequency_graph_url(timeCountSeries, file_name, bucket_name)
+
+    time_count_df = timeCountSeries.to_frame().reset_index()
+    time_count_df.columns=['time','chat_count']
+    time_count_df['time'] = time_count_df['time'].apply(lambda x: convert_to_sec(x))
+    time_cound_df = time_count_df.query('time>300 & time < (time.max()-300)')
+    ############### Local Minimum
+    local_maximum_df = get_local_maximum_df(time_cound_df)
+
+    ############### Chat Edit Point
+    increase_df = get_increase_df(time_count_df)
+    
+    '''구간 선출
+        minimum : 앞뒤 1분 
+        겸치는 구간은 합침   
+        1분사이에 localminumum이랑 같은거 있으면 더 늘려야 하는데
+    '''
+    peak_df = increase_df.append(local_maximum_df)
+    peak_df.sort_values(by='time').drop_duplicates('time', keep='first')    
+    result_json = get_interval_list(peak_df, local_maximum_df, time_count_df)
+    response_json = remove_duplicate_interval(result_json)
     chat_response["chat_edit_list"] = response_json 
 
     # convert_to_json(response_df)
     return chat_response
-    
-'''
-    output = sortedTimeCountDf[sortedTimeCountDf == sortedTimeCountDf.max()]
-    timeList = output.index.values
-    timeList.sort()
-    with open(str(file_name)+'_time.txt','w') as file:
-        for time in timeList:
-            file.write(time+'\n')
-    print("Stop Analysis")
-
-'''
 
 
 def download_file(bucket_name, file_name, destination_file_name):
