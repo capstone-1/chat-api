@@ -158,7 +158,7 @@ def analysis(bucket_name,file_name):
         1분사이에 localminumum이랑 같은거 있으면 더 늘려야 하는데
     '''
     peak_df = increase_df.append(local_maximum_df)
-    peak_df.sort_values(by='time').drop_duplicates('time', keep='first')    
+    peak_df = peak_df.sort_values(by='time').drop_duplicates('time', keep='first')    
     result_json = get_interval_list(peak_df, local_maximum_df, time_count_df)
     response_json = remove_duplicate_interval(result_json)
     chat_response["chat_edit_list"] = response_json 
