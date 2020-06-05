@@ -62,7 +62,7 @@ def get_frequency_graph_url(timeCountSeries, file_name, bucket_name) :
     
 def get_local_maximum_df(time_count_df):
     max_time = time_count_df['time'].max()
-    bins = np.arange(0,max_time,3600)
+    bins = np.arange(0,max_time,900)
     ind = np.digitize(time_count_df["time"], bins)
     time_count_df["location"] = ind
     location_groups = time_count_df.groupby('location')
@@ -73,9 +73,11 @@ def get_local_maximum_df(time_count_df):
     return local_maximum_df
 
 def get_increase_df(time_count_df) :
-    increase_threshold = math.ceil(time_count_df['chat_count'].mean())
+
+    increase_threshold = math.ceil(time_count_df['chat_count'].mean())-1
     cond = ( time_count_df["chat_count"] - time_count_df["chat_count"].shift(-1) ) > increase_threshold
     increase_df = time_count_df[cond]
+    print(increase_df)
     return increase_df
 
 def get_interval_list(peak_df, local_maximum_df, time_count_df):
@@ -84,31 +86,24 @@ def get_interval_list(peak_df, local_maximum_df, time_count_df):
     for time in peak_time_list :
         start = time-60
         end = time+60
-        local_maximum = local_maximum_df.query('time<=@time')['chat_count'].tail(1).to_list()[0]
+        local_maximum_list = local_maximum_df.query('time<=@time')['chat_count'].tail(1).to_list()
+		
+        if (len(local_maximum_list) > 0) :
+            local_maximum = local_maximum_list[0]
 
-        start_result = time_count_df.query('time<=@start & time > @start-60')
-        start_result = start_result.query('chat_count>=@local_maximum')
-        
-        end_result = time_count_df.query('time>@end & time< @end+60')
-        end_result = end_result.query('chat_count>=@local_maximum')
+            end_result_df = time_count_df.query('time>@end & time< @end+60')
+            end_result = end_result_df.query('chat_count>=@local_maximum')
 
-        if (len(start_result['time'].to_list()) == 0) :
-            print("Origin Start : ", start)
-        else :
-            start = start_result['time'].to_list()[0]
-            peak_time_list.append(start-60)
-            print("Changed Start : ", start)
-            
-        if (len(end_result['time'].to_list()) == 0) :
-            print("Origin End : ", end)
-        else :
-            end = end_result['time'].to_list()[0]
-            peak_time_list.append(end+60)
-            print("Changed End : ", end)
-        chat_interval = OrderedDict()
-        chat_interval['start'] = start
-        chat_interval['end'] = end
-        result_json.append(chat_interval)
+            if (len(end_result['time'].to_list()) == 0) :
+                print("Origin End : ", end)
+            else :
+                end = end_result['time'].to_list()[0]
+                peak_time_list.append(end+60)
+                print("Changed End : ", end)
+            chat_interval = OrderedDict()
+            chat_interval['start'] = start
+            chat_interval['end'] = end
+            result_json.append(chat_interval)
     return result_json
 
 def remove_duplicate_interval(result_json):
@@ -139,15 +134,15 @@ def analysis(bucket_name,file_name):
     print("Start Analysis")
     df = pd.read_csv("chat.csv", names=['time', 'name', 'chat'])
     timeCountSeries = df.groupby('time').count()['chat'] 
-    timeCountSeries = median_filter(timeCountSeries, 3)
+    timeCountSeries = median_filter(timeCountSeries, 5)
     chat_response["chat_frequency_url"] = get_frequency_graph_url(timeCountSeries, file_name, bucket_name)
 
     time_count_df = timeCountSeries.to_frame().reset_index()
     time_count_df.columns=['time','chat_count']
     time_count_df['time'] = time_count_df['time'].apply(lambda x: convert_to_sec(x))
-    time_cound_df = time_count_df.query('time>300 & time < (time.max()-300)')
+    time_count_df = time_count_df.query('time>300 & time < (time.max()-300)')
     ############### Local Minimum
-    local_maximum_df = get_local_maximum_df(time_cound_df)
+    local_maximum_df = get_local_maximum_df(time_count_df)
 
     ############### Chat Edit Point
     increase_df = get_increase_df(time_count_df)
