@@ -88,22 +88,22 @@ def get_interval_list(peak_df, local_maximum_df, time_count_df):
         end = time+60
         local_maximum_list = local_maximum_df.query('time<=@time')['chat_count'].tail(1).to_list()
 		
-        if (len(local_maximum_list) > 0) :
-            local_maximum = local_maximum_list[0]
+        # if (len(local_maximum_list) > 0) :
+        #     local_maximum = local_maximum_list[0]
 
-            end_result_df = time_count_df.query('time>@end & time< @end+60')
-            end_result = end_result_df.query('chat_count>=@local_maximum')
+        #     end_result_df = time_count_df.query('time>@end & time< @end+60')
+        #     end_result = end_result_df.query('chat_count>=@local_maximum')
 
-            if (len(end_result['time'].to_list()) == 0) :
-                print("Origin End : ", end)
-            else :
-                end = end_result['time'].to_list()[0]
-                peak_time_list.append(end+60)
-                print("Changed End : ", end)
-            chat_interval = OrderedDict()
-            chat_interval['start'] = start
-            chat_interval['end'] = end
-            result_json.append(chat_interval)
+        #     if (len(end_result['time'].to_list()) == 0) :
+        #         print("Origin End : ", end)
+        #     else :
+        #         end = end_result['time'].to_list()[0]
+        #         peak_time_list.append(end+60)
+        #         print("Changed End : ", end)
+        chat_interval = OrderedDict()
+        chat_interval['start'] = start
+        chat_interval['end'] = end
+        result_json.append(chat_interval)
     return result_json
 
 def remove_duplicate_interval(result_json):
@@ -155,6 +155,7 @@ def analysis(bucket_name,file_name):
     peak_df = increase_df.append(local_maximum_df)
     peak_df = peak_df.sort_values(by='time').drop_duplicates('time', keep='first')    
     result_json = get_interval_list(peak_df, local_maximum_df, time_count_df)
+    print ("result_json : " + str(result_json))
     response_json = remove_duplicate_interval(result_json)
     chat_response["chat_edit_list"] = response_json 
 
